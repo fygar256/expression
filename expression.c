@@ -1,121 +1,326 @@
-#include <stdio.h>
-#include <stdlib.h>
-#include <ctype.h>
+#include    <stdio.h>
+#include    <stdlib.h>
+#include    <ctype.h>
+#include    <string.h>
 
-int c;
-char line[256];
-char *s;
+int vars[26]={0};
 
-void err(char *s)
+void err(char *msg,char **sp)
 {
-    printf("error:%s\n", s);  exit(1);
+    char *s=*sp;
+    printf("error:%s\n", msg);
+    while(*s)
+        s++;
+    *sp=s;
+    return;
 }
 
-void readc()
+double const_(char **sp)    // 数
 {
-    do if ((c=*s++)=='\n') return;
-    while (c==' '||c=='\t');
-}
+    double x=0, a;
+    char    *s;
 
-double const_()    // 数
-{
-    double x, a;
-    int sgn = '+';
-
-    if (c=='-') {
-        sgn = c;  readc();
+    s=*sp;
+    if (*s=='0' && *(s+1)=='x') {
+                s+=2;
+                while (isxdigit(*s)) {
+                    x=16*x+(isdigit(*s)?*s-'0':toupper(*s)-'A'+10);
+                    s++;
+                }
+        }
+    else if  (isdigit(*s)) {
+        while (isdigit(*s))
+            x=10*x+*s++-'0';
+        a=1;
+        if (*s == '.') {
+            s++;
+            while (isdigit(*s))
+                x += (a/=10)*(*s++-'0');
+        }
     }
-
-    if (!isdigit(c)) err("No number or '('");
-
-    x=c-'0';
-    a=1;
-
-    while (readc(),isdigit(c))
-        x=10*x+c-'0';
-
-    if (c == '.')
-        while (readc(), isdigit(c))
-            x += (a/=10)*(c-'0');
-
-    return ((sgn=='-')?-x:x);
-
+    else if (isalpha(*s)) {
+            x=vars[toupper(*s)-'A'];
+            s++;
+    }
+    *sp=s;
+    return x;
 }
 
-double expression();
+double expression(char **sp);
 
-double factor()  //    因子
+double factor1(char **sp)  //    因子1
 {
     double x;
+    char    *s;
+    s=*sp;
 
-    if (c=='(') {
-        readc();
-        x=expression();
-        if (c!=')')
-            err("Missing ')'.");
-        readc();
-        return x;
+    if (*s=='(') {
+        ++s;
+        x=expression(&s);
+        if (*s!=')') {
+            err("Missing ')'.",&s);
+            *sp=s;
+            return 0.0;
         }
+        ++s;
+    }
     else
-         return const_();
+         x=const_(&s);
+    *sp=s;
+    return x;
+}
+double factor(char **sp)  //    因子
+{
+    double x;
+    char    *s;
+    s=*sp;
+
+    if (*s=='-') {
+        s++;
+        x=factor(&s);
+        x=-x;
+    }
+    else if (*s=='~') {
+        s++;
+        x=factor(&s);
+        x=~(int)x;
+    }
+    else {
+        x=factor1(&s);
+    }
+
+    *sp=s;
+    return x;
 }
 
-double term()  //    項
+double term0(char **sp)  //    項0
 {
     double x, y;
-
-    x = factor();
+    char    *s;
+    s=*sp;
+    x = factor(&s);
     while(1)
-        if (c=='*') {
-            readc();
-            x *= factor();
+        if (*s=='*') {
+            s++;
+            x *= factor(&s);
             }
-        else if (c == '/') {
-            readc();
-            y = factor();
-            if (y==0) err("Division by 0");
+        else if (*s == '/') {
+            s++;
+            y = factor(&s);
+            if (y==0) err("Division by 0 error.",&s);
             x /= y;
             }
         else break;
+    *sp=s;
     return x;
 }
 
-double expression()  // 式
+double term1(char **sp)  //    項1
 {
     double x;
+    char    *s;
 
-    x=term();
+    s=*sp;
+    x = term0(&s);
     while(1)
-        if (c == '+') {
-            readc();
-            x += term();
+        if (*s=='+') {
+            s++;
+            x += term0(&s);
             }
-        else if (c == '-') {
-            readc();
-            x -= term();
+        else if (*s == '-') {
+            s++;
+            x -= term0(&s);
             }
         else break;
+    *sp=s;
     return x;
 }
 
-double evaluate_expression()
+double term2(char **sp)  //    項2
 {
     double x;
-    s=line;
-    readc();
-    if (c!='\n') err("Syntax error");
-    x=expression();
+    char    *s;
+
+    s=*sp;
+    x = term1(&s);
+    while(1)
+        if (*s == '<' && *(s+1)=='<') {
+            s+=2;
+            x=(int)x<<(int)term1(&s);
+        }
+        else if (*s == '>' && *(s+1)=='>') {
+            s+=2;
+            x=(int)x>>(int)term1(&s);
+        }
+        else break;
+    *sp=s;
     return x;
 }
-    
-int main()
+
+double term3(char **sp)  //      項3
 {
     double x;
+    char    *s;
 
-    printf("Input expression:");
-    fgets(line,sizeof(line),stdin);
-
-    x=evaluate_expression();
-    printf("%g\n",x);
-    return 0;
+    s=*sp;
+    x=term2(&s);
+    while(1)
+        if (*s=='&' && *(s+1)!='&') {
+            s++;
+            x=(int)x&(int)term2(&s);
+        }
+        else break;
+    *sp=s;
+    return x;
 }
+
+double term4(char **sp)  //      項4
+{
+    double x;
+    char    *s;
+
+    s=*sp;
+    x=term3(&s);
+    while(1)
+        if (*s=='|' && *(s+1)!='|') {
+            s++;
+            x=(int)x|(int)term3(&s);
+        }
+        else break;
+    *sp=s;
+    return x;
+}
+
+double term5(char **sp)
+{
+    double x;
+    char   *s;
+    s=*sp;
+    x=term4(&s);
+    while(1)
+        if (*s=='^') {
+            s++;
+            x=(int)x^(int)term4(&s);
+        }
+        else break;
+    *sp=s;
+    return x;
+}
+
+double term6(char **sp)  //      項6
+{
+    double x;
+    char   *s;
+    s=*sp;
+    x=term5(&s);
+    while(1)
+        if (*s=='\'') {
+            ++s;
+            int a,b;
+            a=(int)x;
+            b=(int)term5(&s);
+            x=(double)((a&~((~0)<<b))|(a>>(b-1)&1?((~0)<<b):0));
+        }
+        else
+            break;
+    *sp=s;
+    return x;
+}
+
+
+double term7(char **sp)  //      項7
+{
+    double x;
+    char    *s;
+
+    s=*sp;
+    x=term6(&s);
+    while(1) {
+        if (*s == '=' && *(s+1)=='=') {
+            s+=2;
+            x=x==term6(&s);
+        }
+        else if (*s == '!' && *(s+1)=='=' ) {
+            s+=2;
+            x=x!=term6(&s);
+        }
+        else if (*s=='<' && *(s+1)=='=') {
+            s+=2;
+            x=x<=term6(&s);
+        }
+        else if (*s=='<' && *(s+1)!='=') {
+            s++;
+            x=x<term6(&s);
+        }
+        else if (*s=='>' && *(s+1)=='=') {
+            s+=2;
+            x=x>=term6(&s);
+        }
+        else if (*s=='>' && *(s+1)!='=' ) {
+            s++;
+            x=x>term6(&s);
+        }
+        else break;
+    }
+    *sp=s;
+    return x;
+}
+
+double term8(char **sp)  //      項8
+{
+    double x;
+    char   *s;
+    s=*sp;
+    if (*s=='!') {
+        s++;
+        x=!(term8(&s));
+    }
+    else
+        x=term7(&s);
+    *sp=s;
+    return x;
+}
+
+double term9(char **sp)  //      項9
+{
+    double x;
+    char    *s;
+
+    s=*sp;
+    x=term8(&s);
+    while(1) {
+        if (*s=='&' && *(s+1)=='&') {
+            s+=2;
+            x=(int)x&&(int)term8(&s);
+        }
+        else break;
+    }
+    *sp=s;
+    return x;
+}
+
+double term10(char **sp)  //      項10
+{
+    double x;
+    char    *s;
+
+    s=*sp;
+    x=term9(&s);
+    while(1) {
+        if (*s=='|' && *(s+1)=='|') {
+            s+=2;
+            x=((int)x)||((int)term9(&s));
+        }
+        else break;
+    }
+    *sp=s;
+    return x;
+}
+
+
+double expression(char **sp) {
+    double x;
+    x=term10(sp);
+    return x;
+}
+
